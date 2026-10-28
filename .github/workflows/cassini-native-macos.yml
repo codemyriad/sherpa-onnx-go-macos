@@ -7,6 +7,10 @@ name: Cassini native macOS
 
 on:
   workflow_dispatch:
+    inputs:
+      arm64_runner:
+        description: GitHub-hosted arm64 macOS runner label
+        default: macos-latest
   push:
     branches: [v2.0.1-cassini]
     paths:
@@ -27,7 +31,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-latest
+          - runner: ${{ inputs.arm64_runner || 'macos-latest' }}
             arch: arm64
             triple: aarch64-apple-darwin
             minos: "11.0"
