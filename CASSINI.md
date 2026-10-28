@@ -17,8 +17,32 @@ on the v2 line). Consumers keep the unmodified
 module with a `replace` directive:
 
 ```
-replace github.com/k2-fsa/sherpa-onnx-go-macos/v2 => github.com/codemyriad/sherpa-onnx-go-macos/v2 v2.0.1-cassini.1
+replace github.com/k2-fsa/sherpa-onnx-go-macos/v2 => github.com/codemyriad/sherpa-onnx-go-macos/v2 v2.0.1-cassini.2
 ```
+
+## v2.0.1-cassini.2
+
+v2.0.1-cassini.1 with upstream's C++ wrapper library
+(`lib/*/libsherpa-onnx-cxx-api.dylib`) removed. The C API library, ONNX
+Runtime, `sherpa_onnx.go` and `c-api.h` are byte-identical to v2.0.1-cassini.1.
+
+That wrapper was upstream's stock v2.0.1 build, compiled against upstream's C
+header. #4032 appends the `sortformer` member to
+`SherpaOnnxOfflineSpeakerSegmentationModelConfig`, so the stock wrapper and this
+C API disagree on the layout of the whole speaker diarization config (on 64-bit
+the struct grows from 80 to 96 bytes and the embedding config moves from offset
+32 to 48). `OfflineSpeakerDiarization::Create` through it would hand the C API
+the embedding model path as `segmentation.sortformer.model` and every later
+field at the wrong offset, which breaks ordinary Pyannote diarization as well as
+Sortformer. Nothing in Go links the C++ wrapper (`build_darwin_*.go` link only
+`sherpa-onnx-c-api` and `onnxruntime`), so the module now ships only the two
+libraries it uses. C++ consumers must build `sherpa-onnx-cxx-api` from the
+source commit above.
+
+`scripts/cassini-check-module.sh` (run it from the repository root before
+tagging) fails if `lib/` holds anything but the C API library and ONNX
+Runtime per architecture, or if `CASSINI-SHA256SUMS` does not list exactly those
+files with matching checksums.
 
 ## v2.0.1-cassini.1
 
@@ -47,10 +71,10 @@ Upstream `v2.0.1` with:
   the C layout of the diarization config. Do not use this Go source with
   upstream's library.
 
-ONNX Runtime (1.28.2, the archive upstream v2.0.1 pins in `cmake/onnxruntime-osx-{arm64,x86_64}.cmake`) and `libsherpa-onnx-cxx-api.dylib` are upstream
-v2.0.1's, unchanged. The workflow downloads the same pinned archive and compares it with the committed `libonnxruntime.dylib`: byte-identical on both architectures (arm64 `b0613d0a…`, x86_64 `2bf27180…`). The C++ wrapper library is not used from Go;
-it was built against upstream's C header, so do not use it for Sortformer
-diarization.
+ONNX Runtime (1.28.2, the archive upstream v2.0.1 pins in `cmake/onnxruntime-osx-{arm64,x86_64}.cmake`) is upstream
+v2.0.1's, unchanged. The workflow downloads the same pinned archive and compares it with the committed `libonnxruntime.dylib`: byte-identical on both architectures (arm64 `b0613d0a…`, x86_64 `2bf27180…`).
+v2.0.1-cassini.1 also kept upstream's `libsherpa-onnx-cxx-api.dylib`; v2.0.1-cassini.2
+removes it (see below).
 
 As in the Linux builds, text-to-speech is compiled out: the C API keeps its TTS
 entry points, which report that TTS is unavailable, so the wrapper still links.
