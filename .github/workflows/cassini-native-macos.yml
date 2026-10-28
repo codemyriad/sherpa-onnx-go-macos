@@ -1,21 +1,36 @@
-# Build the Cassini macOS C API library natively on each architecture with
-# scripts/build-native.sh (pinned to codemyriad/sherpa-onnx v2.0.1-cassini-1),
-# match upstream's install name, rpath, deployment target and ad-hoc signature,
-# then probe it on the runner through the stock sherpa-onnx-go/v2 wrapper and
-# this module's Go source. ONNX Runtime stays upstream v2.0.1's.
+# Build the Cassini macOS C API library with scripts/build-native.sh (pinned to
+# codemyriad/sherpa-onnx v2.0.1-cassini-1), match upstream's install name,
+# rpath, deployment target and ad-hoc signature, then check it.
+#
+# Both architectures build on the macos-15-intel runner: x86_64 natively, arm64
+# cross-compiled with CMAKE_OSX_ARCHITECTURES=arm64 (Apple clang targets arm64
+# from Intel; sherpa-onnx's cmake then pins the osx-arm64 ONNX Runtime). Hosted
+# Apple silicon runners were not being acquired on 2026-10-28. The x86_64
+# library is probed on the runner through the stock sherpa-onnx-go/v2 wrapper;
+# the arm64 library gets structural checks and a cross-linked Go probe build.
+#
+# mode=probe-arm64 runs the same probes on an Apple silicon runner against the
+# libraries committed at the dispatched ref (use it on a release tag).
 name: Cassini native macOS
 
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: build (both architectures on macos-15-intel) or probe-arm64 (committed arm64 library on Apple silicon)
+        type: choice
+        options: [build, probe-arm64]
+        default: build
       arm64_runner:
-        description: GitHub-hosted arm64 macOS runner label
+        description: GitHub-hosted arm64 macOS runner label for probe-arm64
         default: macos-latest
   push:
     branches: [v2.0.1-cassini]
     paths:
       - .github/workflows/cassini-native-macos.yml
       - scripts/build-native.sh
+      - scripts/cassini-check-dylib.sh
+      - scripts/cassini-fetch-models.sh
       - scripts/cassini-probe/**
 
 defaults:
@@ -25,29 +40,32 @@ defaults:
 permissions:
   contents: read
 
+env:
+  MODELS: /tmp/cassini-models
+  LC_ALL: C
+  RUNTIME_VERSION: 2.0.1+cassini.parakeet-tdt-joiner-v1.nemotron-diarization-v2
+
 jobs:
   build:
+    if: github.event_name == 'push' || inputs.mode == 'build'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: ${{ inputs.arm64_runner || 'macos-latest' }}
-            arch: arm64
+          - arch: arm64
             triple: aarch64-apple-darwin
             minos: "11.0"
-          - runner: macos-15-intel
-            arch: x86_64
+            cross: true
+          - arch: x86_64
             triple: x86_64-apple-darwin
             minos: "10.15"
-    runs-on: ${{ matrix.runner }}
+            cross: false
+    runs-on: macos-15-intel
     timeout-minutes: 90
     env:
       OUT: /tmp/cassini-native/out
       WORK: /tmp/cassini-native/work
-      MODELS: /tmp/cassini-models
-      LC_ALL: C
       LIB: lib/${{ matrix.triple }}/libsherpa-onnx-c-api.dylib
-      RUNTIME_VERSION: 2.0.1+cassini.parakeet-tdt-joiner-v1.nemotron-diarization-v2
     steps:
       - uses: actions/checkout@v4
 
@@ -58,7 +76,8 @@ jobs:
 
       - name: Build libsherpa-onnx-c-api.dylib
         run: |
-          test "$(uname -m)" = "${{ matrix.arch }}"
+          uname -m
+          test "$(uname -m)" = x86_64
           CASSINI_NATIVE_BUILD_JOBS=$(sysctl -n hw.ncpu) scripts/build-native.sh cpu "$OUT" "$WORK" \
             -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ matrix.minos }}
@@ -76,22 +95,14 @@ jobs:
           codesign --verify --verbose "$lib"
           shasum -a 256 "$OUT"/*.dylib
 
-      - name: Check linkage
+      - name: Check architecture, linkage, signature and symbols
         run: |
           lib=$OUT/libsherpa-onnx-c-api.dylib
-          otool -L "$lib" | tee "$OUT/otool-L.txt"
+          otool -L "$lib" > "$OUT/otool-L.txt"
           otool -l "$lib" > "$OUT/otool-l.txt"
-          lipo -archs "$lib" | tee /dev/stderr | grep -qx "${{ matrix.arch }}"
-          # Same dependencies, rpath and deployment target as upstream v2.0.1's library.
-          deps=$(otool -L "$lib" | tail -n +2 | awk '{print $1}' | sort | tr '\n' ' ')
-          test "$deps" = "/usr/lib/libSystem.B.dylib /usr/lib/libc++.1.dylib @rpath/libonnxruntime.dylib @rpath/libsherpa-onnx-c-api.dylib "
-          rpaths=$(otool -l "$lib" | awk '/cmd LC_RPATH/{getline; getline; print $2}' | tr '\n' ' ')
-          test "$rpaths" = "@loader_path "
-          minos=$(otool -l "$lib" | awk '/cmd LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')
-          echo "minos $minos"
-          test "$minos" = "${{ matrix.minos }}"
-          grep -aq "$RUNTIME_VERSION" "$lib"
+          scripts/cassini-check-dylib.sh "$lib" ${{ matrix.arch }} ${{ matrix.minos }} "$RUNTIME_VERSION" 2>&1 | tee "$OUT/check.log"
           # ONNX Runtime stays upstream's; report whether the pinned archive matches it.
+          lipo -archs "$OUT/libonnxruntime.dylib" | grep -qx ${{ matrix.arch }}
           shasum -a 256 "$OUT/libonnxruntime.dylib" lib/${{ matrix.triple }}/libonnxruntime.dylib | tee "$OUT/onnxruntime.sha256"
           if cmp "$OUT/libonnxruntime.dylib" lib/${{ matrix.triple }}/libonnxruntime.dylib; then
             echo "pinned ONNX Runtime is byte-identical to upstream's" | tee -a "$OUT/onnxruntime.sha256"
@@ -99,35 +110,26 @@ jobs:
             echo "pinned ONNX Runtime differs from upstream's; upstream's is kept" | tee -a "$OUT/onnxruntime.sha256"
           fi
 
-      - name: Fetch pinned production models and samples
+      - name: Cross-link the Go probe for arm64
+        if: matrix.cross
         run: |
-          command -v zstd >/dev/null || brew install zstd
-          fetch() { curl --fail --location --retry 3 -o "$2" "$1"; echo "$3  $2" | shasum -a 256 -c -; }
-          # dist.gocassini.com artifacts are seekable zstd (standard frames plus a
-          # skippable seek table); check the decompressed file against the catalogue.
-          fetchz() { curl --fail --location --retry 3 -o "$2.zst" "$1"; zstd -q -d --rm -f "$2.zst" -o "$2"; echo "$3  $2" | shasum -a 256 -c -; }
-          dist=https://dist.gocassini.com/models/files
-          hf=https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78
-          mkdir -p "$MODELS/v3-int8" "$MODELS/ultra-int8" "$MODELS/diar"
-          fetch $hf/test_wavs/en.wav "$MODELS/en.wav" 148b936b43ce7c546a866e64da059f0458aee2d65e617f16e9d94f06e8d99ed6
-          fetch https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/0-four-speakers-zh.wav \
-            "$MODELS/four-speakers-zh.wav" bedf036caed208386c67b4ef4b11f83d74dd0d420b102163a1c33cd09cde7010
-          # parakeet-tdt-0.6b-v3-int8 (Cassini catalogue before Ultra replaced it).
-          fetchz $dist/cb9e98257d3bc2611b43d9897e67454e5893aff1ffc90229ca3fa7f9ed5bb22e/encoder.int8.onnx.zst "$MODELS/v3-int8/encoder.int8.onnx" acfc2b4456377e15d04f0243af540b7fe7c992f8d898d751cf134c3a55fd2247
-          fetchz $dist/b14c3967107f0a5e4e9c0bde770c204202bde8d1a6255c27a863930e8c887c3d/decoder.int8.onnx.zst "$MODELS/v3-int8/decoder.int8.onnx" 179e50c43d1a9de79c8a24149a2f9bac6eb5981823f2a2ed88d655b24248db4e
-          fetchz $dist/1ef3c78137d39d45cfad961be5a45bf7abd3c13fa721c7da2327b0eb3d0e8ce6/joiner.int8.onnx.zst "$MODELS/v3-int8/joiner.int8.onnx" 3164c13fc2821009440d20fcb5fdc78bff28b4db2f8d0f0b329101719c0948b3
-          fetchz $dist/5b3811f0c23fefc86835981f0a23ecfb817999df272ad744c597e5b669ea1b4a/tokens.txt.zst "$MODELS/v3-int8/tokens.txt" d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d
-          # parakeet-ultra-0.6b-int8 production bundle: encoder url is the plain
-          # https://huggingface.co/moondream/parakeet-ultra, which stock v2.0.1 rejects.
-          fetchz $dist/caf7a38f2ad3224c1863564fb6e975a11aa3ae6ad1e7ad0bee5c4f5e018babb4/encoder.int8.onnx.zst "$MODELS/ultra-int8/encoder.int8.onnx" 299617fefd4664d1c115b691dcb6413cabcdbcc694cdf3cb4464b72c5fc3ae69
-          fetchz $dist/69e2e91d01225bc552f8b0113630562fc52622cb2a3c61ef4445ee779f06b295/decoder.int8.onnx.zst "$MODELS/ultra-int8/decoder.int8.onnx" 1fab98fe6c12aded87d2da66272cc9e148d0a0044ce3850a12fe56302ec4a922
-          fetchz $dist/639fda62a71242a8d7cefb6647f2094eb8ac783925ce91cbd047a0de6988f396/joiner.int8.onnx.zst "$MODELS/ultra-int8/joiner.int8.onnx" 8a71aaccfdba3d451775507a889afd2257d2e754463fd81095a8c8f290f924c2
-          fetchz $dist/5b3811f0c23fefc86835981f0a23ecfb817999df272ad744c597e5b669ea1b4a/tokens.txt.zst "$MODELS/ultra-int8/tokens.txt" d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d
-          grep -aq 'https://huggingface.co/moondream/parakeet-ultra' "$MODELS/ultra-int8/encoder.int8.onnx"
-          # nemotron-3-diarization-int8 (interface version 2).
-          fetchz $dist/794720a59892189484d38a186d2b350018b4194cae55292f501b2849d6313290/model.int8.onnx.zst "$MODELS/diar/model.int8.onnx" 47c221ea9b4d4e7f6c108bd098e769bc706cdc986c29f6133c93cae335fe6779
+          cp "$OUT/libsherpa-onnx-c-api.dylib" "$LIB"
+          cd scripts/cassini-probe
+          # Links the stock wrapper and this module's Go source against the
+          # arm64 library; any C symbol the wrapper needs must resolve.
+          CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 CC="clang -arch arm64" \
+            go build -buildvcs=false -o "$OUT/cassini-probe-arm64" .
+          file "$OUT/cassini-probe-arm64" | tee "$OUT/probe-arm64-build.txt"
+          lipo -archs "$OUT/cassini-probe-arm64" | grep -qx arm64
+          otool -L "$OUT/cassini-probe-arm64" | tee -a "$OUT/probe-arm64-build.txt"
+          echo "arm64 library cross-built on Intel: structural checks only, not run" | tee "$OUT/probe.log"
+
+      - name: Fetch pinned production models and samples
+        if: ${{ !matrix.cross }}
+        run: scripts/cassini-fetch-models.sh "$MODELS"
 
       - name: Probe through the stock Go wrapper
+        if: ${{ !matrix.cross }}
         run: |
           cp "$OUT/libsherpa-onnx-c-api.dylib" "$LIB"
           cd scripts/cassini-probe
@@ -151,5 +153,54 @@ jobs:
             /tmp/cassini-native/out/onnxruntime.sha256
             /tmp/cassini-native/out/otool-L.txt
             /tmp/cassini-native/out/otool-l.txt
+            /tmp/cassini-native/out/check.log
+            /tmp/cassini-native/out/probe-arm64-build.txt
+            /tmp/cassini-native/out/probe.log
+          if-no-files-found: warn
+
+  probe-arm64:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'probe-arm64'
+    runs-on: ${{ inputs.arm64_runner }}
+    timeout-minutes: 60
+    env:
+      OUT: /tmp/cassini-native/out
+      LIB: lib/aarch64-apple-darwin/libsherpa-onnx-c-api.dylib
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache: false
+
+      - name: Check the committed arm64 library
+        run: |
+          test "$(uname -m)" = arm64
+          mkdir -p "$OUT"
+          if [ -f CASSINI-SHA256SUMS ]; then
+            grep aarch64-apple-darwin CASSINI-SHA256SUMS | shasum -a 256 -c -
+          fi
+          scripts/cassini-check-dylib.sh "$LIB" arm64 11.0 "$RUNTIME_VERSION" 2>&1 | tee "$OUT/check.log"
+
+      - name: Fetch pinned production models and samples
+        run: scripts/cassini-fetch-models.sh "$MODELS"
+
+      - name: Probe through the stock Go wrapper
+        run: |
+          cd scripts/cassini-probe
+          CGO_ENABLED=1 go build -buildvcs=false -o "$OUT/cassini-probe" .
+          set -o pipefail
+          "$OUT/cassini-probe" -wav "$MODELS/en.wav" \
+            -sortformer "$MODELS/diar/model.int8.onnx" -diar-wav "$MODELS/four-speakers-zh.wav" \
+            -diar-expect four-speakers-zh.turns \
+            "$MODELS/v3-int8" "$MODELS/ultra-int8" 2>&1 | tee "$OUT/probe.log"
+          grep -qx PASS "$OUT/probe.log"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cassini-probe-arm64
+          path: |
+            /tmp/cassini-native/out/check.log
             /tmp/cassini-native/out/probe.log
           if-no-files-found: warn
