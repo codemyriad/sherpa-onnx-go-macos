@@ -8,7 +8,7 @@ publish a new version and update the consumer's go.sum.
 
 | Branch | Upstream base | Tags | Native source |
 |---|---|---|---|
-| `v2.0.1-cassini` | `v2.0.1` | `v2.0.1-cassini.N` | codemyriad/sherpa-onnx `v2.0.1-cassini-1` |
+| `v2.0.1-cassini` | `v2.0.1` | `v2.0.1-cassini.N` | codemyriad/sherpa-onnx `v2.0.1-cassini-2` (`.3` on; `-1` up to `.2`) |
 | `v1.13.7-cassini` | `v1.13.7` | `v1.13.7-cassini.8` | codemyriad/sherpa-onnx `v1.13.7-cassini-parakeet-ultra-v1` |
 
 The module path stays upstream's (`github.com/k2-fsa/sherpa-onnx-go-macos/v2`
@@ -17,8 +17,38 @@ on the v2 line). Consumers keep the unmodified
 module with a `replace` directive:
 
 ```
-replace github.com/k2-fsa/sherpa-onnx-go-macos/v2 => github.com/codemyriad/sherpa-onnx-go-macos/v2 v2.0.1-cassini.2
+replace github.com/k2-fsa/sherpa-onnx-go-macos/v2 => github.com/codemyriad/sherpa-onnx-go-macos/v2 v2.0.1-cassini.3
 ```
+
+## v2.0.1-cassini.3
+
+`libsherpa-onnx-c-api.dylib` for x86_64 and arm64 rebuilt from
+[`deede1786479e265a3116bea2b71aac47113d9fc`](https://github.com/codemyriad/sherpa-onnx/commit/deede1786479e265a3116bea2b71aac47113d9fc)
+(codemyriad/sherpa-onnx tag `v2.0.1-cassini-2`, codeload tarball sha256
+`44727282…`). It carries the same three Cassini patches as
+`v2.0.1-cassini-1`, rebased from the v2.0.1 release onto upstream master
+`935e5ded`, which is v2.0.1 plus 16 commits, among them #4084 and #4130 (NeMo
+TDT `modified_beam_search`) and #4123 (`--length-reward` parsing). Its fourth
+patch, a `cudaGetDeviceProperties` cache, is built only into Linux x86_64 CUDA
+libraries, not into these. The runtime version string, `sherpa_onnx.go`,
+`c-api.h` and ONNX Runtime are unchanged; `lib/` still holds only the C API
+and ONNX Runtime (`scripts/cassini-check-module.sh` passes).
+
+The libraries are the artifacts of
+[run 41049056567](https://github.com/codemyriad/sherpa-onnx-go-macos/actions/runs/41049056567)
+(commit `2850eb9`, both jobs green, same workflow and checks as `.1`):
+
+| | x86_64 (native, `macos-15-intel`) | arm64 (cross-built on `macos-15-intel`) |
+|---|---|---|
+| architecture, ad-hoc signature, deps, install name, rpath, deployment target, version string, Sortformer symbols | pass | pass |
+| pinned ONNX Runtime = committed one | yes | yes |
+| Go probe builds and links | pass | pass (cross-linked) |
+| `en.wav` v3 int8 and plain-URL Ultra int8, gain 1 / 0.001 | 27 tokens each, full sentence | **not run** |
+| Sortformer, `0-four-speakers-zh.wav` | 9 turns, 4 speakers, max boundary diff 0.010 s | **not run** |
+
+As with `.1`, the arm64 library has been checked structurally but not run
+on Apple silicon by the build. A `mode=probe-arm64` dispatch on this tag runs
+the full probe there; its result is recorded below when one completes.
 
 ## v2.0.1-cassini.2
 

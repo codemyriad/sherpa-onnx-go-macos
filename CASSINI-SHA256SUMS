@@ -1,4 +1,4 @@
 b0613d0ae53199a83b05fa48e169211498e9d40d54beaa372068ebe5ec5b0929  lib/aarch64-apple-darwin/libonnxruntime.dylib
-e6ef7c7083537c04d51fde40b98f009df8ea6d29195ae6550c2ca6ec40d5858b  lib/aarch64-apple-darwin/libsherpa-onnx-c-api.dylib
+23d472e5e5c6a82cc4b3765a24670674e3505465afa9cfab455a488c7be71643  lib/aarch64-apple-darwin/libsherpa-onnx-c-api.dylib
 2bf27180c09e6fd3f407c9ab25205ebf1ff95f2d53bfa35e35409b5849e0ac70  lib/x86_64-apple-darwin/libonnxruntime.dylib
-ea9b85c486577370272011dee36b90e1fb7663b8c64c131ffd1f5a6b488f28f3  lib/x86_64-apple-darwin/libsherpa-onnx-c-api.dylib
+83f6c77ce083715b12f6f67d1d7770148ee443c875fff4a00793fb3f3aa43eaf  lib/x86_64-apple-darwin/libsherpa-onnx-c-api.dylib
