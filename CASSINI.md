@@ -46,9 +46,16 @@ The libraries are the artifacts of
 | `en.wav` v3 int8 and plain-URL Ultra int8, gain 1 / 0.001 | 27 tokens each, full sentence | **not run** |
 | Sortformer, `0-four-speakers-zh.wav` | 9 turns, 4 speakers, max boundary diff 0.010 s | **not run** |
 
-As with `.1`, the arm64 library has been checked structurally but not run
-on Apple silicon by the build. A `mode=probe-arm64` dispatch on this tag runs
-the full probe there; its result is recorded below when one completes.
+**arm64 on Apple silicon: PASS.** The `mode=probe-arm64` dispatch on tag
+`v2.0.1-cassini.3`
+([run 41053618416](https://github.com/codemyriad/sherpa-onnx-go-macos/actions/runs/41053618416),
+runner image `macos-26-arm64`) checked the committed arm64 library against
+`CASSINI-SHA256SUMS` and with `cassini-check-dylib.sh`, then ran the full
+probe: the version string; `en.wav` with v3 int8 and plain-URL Ultra int8 at
+gain 1 and 0.001, 27 tokens each with the full sentence; and Sortformer with
+9 turns and 4 speakers, max boundary difference 0.010 s. This is the first
+time a Cassini v2.0.1 arm64 macOS library has run on Apple silicon. The
+`.1`/`.2` libraries never did.
 
 ## v2.0.1-cassini.2
 
