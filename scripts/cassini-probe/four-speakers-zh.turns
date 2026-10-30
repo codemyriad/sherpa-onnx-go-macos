@@ -1,6 +1,7 @@
 # Nemotron-3-Diarization int8 (dist sha256 47c221ea...) on 0-four-speakers-zh.wav
 # (sha256 bedf036c...), Sortformer threshold 0.5, through Segmentation.Sortformer.
-# Reference: codemyriad/sherpa-onnx c810dfcf built for Linux x86_64 (CPU).
+# Reference: codemyriad/sherpa-onnx c810dfcf built for Linux x86_64 (CPU);
+# v2.0.1-cassini-2 (deede178) gives the same turns.
 # start end speaker
 0.600 6.810 0
 7.030 10.830 1

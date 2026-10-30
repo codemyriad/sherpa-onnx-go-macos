@@ -1,5 +1,5 @@
 # Build the Cassini macOS C API library with scripts/build-native.sh (pinned to
-# codemyriad/sherpa-onnx v2.0.1-cassini-1), match upstream's install name,
+# codemyriad/sherpa-onnx v2.0.1-cassini-2), match upstream's install name,
 # rpath, deployment target and ad-hoc signature, then check it.
 #
 # Both architectures build on the macos-15-intel runner: x86_64 natively, arm64
